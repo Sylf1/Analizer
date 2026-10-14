@@ -44,16 +44,13 @@ Tener instalado **Python 3.x** en tu sistema.
 
 1. **Clona este repositorio:**
    ```bash
-   git clone [https://github.com/Sylf1/Analizer.git](https://github.com/Sylf1/Analizer.git)
+   git clone https://github.com/Sylf1/Analizer.git
 
 2. **Accede a la carpeta del proyecto:**
-   ```bash
+   ```bash
    cd Analizer
  
-4. **Ejecuta el prototipo:**
+3. **Ejecuta el prototipo:**
    ```bash
    python app.py
 
-1. **Clona este repositorio:**
-   ```bash
-   git clone [https://github.com/Sylf1/Analizer.git](https://github.com/Sylf1/Analizer.git)
