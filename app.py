@@ -1,55 +1,56 @@
-import streamlit as st
+import os
+import requests
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
+import tkinter as tk
+from tkinter import messagebox
+import kagglehub
 from urllib.parse import urlparse
-import requests
 
-st.set_page_config(page_title="CISO App - Detector de Phishing", page_icon="🛡️")
+# 1. CARGAR DATOS EN VIVO DESDE URLHAUS (Threat Intelligence)
+print("Sincronizando base de datos global de URLhaus...")
+URLHAUS_FEED_URL = "https://urlhaus.abuse.ch/downloads/text_recent/"
+urlhaus_malicious_urls = set()
 
-st.title("🛡️ CISO App - Detector de Phishing Multi-Capa")
-st.write("Herramienta de análisis de URLs para seguridad de redes.")
+try:
+    response = requests.get(URLHAUS_FEED_URL, timeout=5)
+    if response.status_code == 200:
+        for line in response.text.splitlines():
+            line = line.strip()
+            # Ignorar comentarios del archivo
+            if line and not line.startswith("#"):
+                urlhaus_malicious_urls.add(line.lower())
+        print(f"¡Sincronizado con éxito! {len(urlhaus_malicious_urls)} amenazas activas cargadas desde la nube.")
+    else:
+        print("No se pudo conectar a URLhaus, operando con listas locales e IA.")
+except Exception as e:
+    print("Modo offline: Sin conexión a internet para URLhaus. Usando red local.")
 
-# Cargar URLhaus (con caché para no saturar)
-@st.cache_data(ttl=3600)
-def cargar_urlhaus():
-    urlhaus_set = set()
-    try:
-        res = requests.get("https://urlhaus.abuse.ch/downloads/text_recent/", timeout=5)
-        if res.status_code == 200:
-            for line in res.text.splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    urlhaus_set.add(line.lower())
-    except:
-        pass
-    return urlhaus_set
+# 2. CARGAR EL DATASET DE KAGGLE PARA LA IA
+print("Cargando dataset de Machine Learning...")
+try:
+    path = kagglehub.dataset_download("danielfernandon/web-page-phishing-dataset")
+    archivo_csv = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.csv')][0]
+    df = pd.read_csv(archivo_csv)
+except Exception as e:
+    df = None
 
-urlhaus_malicious_urls = cargar_urlhaus()
-
-# Simular dataset y entrenar modelo de prueba (o puedes cargar tu CSV)
-# Aquí usamos datos base para que el modelo funcione rápido en la nube
-@st.cache_resource
-def entrenar_modelo():
-    # Datos de entrenamiento simulados basados en tus features
-    data = {
-        'url_length': [20, 50, 80, 25, 95, 30],
-        'n_dots': [1, 4, 6, 2, 5, 1],
-        'n_hypens': [0, 2, 4, 0, 3, 0],
-        'n_at': [0, 0, 1, 0, 1, 0],
-        'phishing': [0, 1, 1, 0, 1, 0]
-    }
-    df = pd.DataFrame(data)
-    X = df[['url_length', 'n_dots', 'n_hypens', 'n_at']]
+# Entrenar el modelo
+if df is not None:
+    features = ['url_length', 'n_dots', 'n_hypens', 'n_at']
+    X = df[features]
     y = df['phishing']
-    model = RandomForestClassifier(n_estimators=50, random_state=42)
-    model.fit(X, y)
-    return model
 
-modelo = entrenar_modelo()
+    modelo = RandomForestClassifier(n_estimators=100, random_state=42)
+    modelo.fit(X, y)
+    print("¡Modelo de IA entrenado y listo!\n")
 
+# Listas de control secundarias (Tus hallazgos locales y trampas de hosting)
 DOMINIOS_MALICIOSOS = [
-    "v3rificar367.com", "login-actualizacion-seguridad.com",
-    "banco-seguro-actualizar.com", "free-nitro-discord-gifts.com"
+    "v3rificar367.com",
+    "login-actualizacion-seguridad.com",
+    "banco-seguro-actualizar.com",
+    "free-nitro-discord-gifts.com"
 ]
 
 HOSTINGS_GRATUITOS = [
@@ -65,38 +66,74 @@ palabras_suspiciosas = [
     'confirmacion', 'c00nfirmaci0n'
 ]
 
-url_input = st.text_input("Ingresa la URL a analizar:")
-
-if st.button("Analizar URL"):
-    if not url_input:
-        st.warning("Por favor ingresa una URL.")
-    else:
-        url_limpia = url_input.lower()
-        url_completa = url_limpia if "://" in url_limpia else "http://" + url_limpia
-        parsed_url = urlparse(url_completa)
-        netloc = parsed_url.netloc
+# 3. FUNCIÓN DE ANÁLISIS MULTICAPA
+def analizar_url():
+    if df is None:
+        messagebox.showerror("Error", "Falta el dataset de entrenamiento.")
+        return
         
-        # Capas de análisis
-        if url_limpia in urlhaus_malicious_urls or any(netloc in item for item in urlhaus_malicious_urls):
-            st.error("¡ALERTA ROJA! Reportado en URLhaus (Malware/Phishing)")
-        elif netloc in DOMINIOS_MALICIOSOS:
-            st.error("¡ALERTA ROJA! Dominio en Lista Negra Local")
-        else:
-            es_hosting_gratis = any(h in netloc for h in HOSTINGS_GRATUITOS)
-            tiene_palabra = any(p in url_limpia for p in palabras_suspiciosas)
-            
-            if es_hosting_gratis and tiene_palabra:
-                st.error("¡ALERTA ROJA! Hosting gratuito con trampa detectado")
-            else:
-                # IA / Heurística
-                url_length = len(url_input)
-                n_dots = url_input.count('.')
-                n_hypens = url_input.count('-')
-                n_at = url_input.count('@')
-                
-                pred = modelo.predict([[url_length, n_dots, n_hypens, n_at]])
-                
-                if n_at > 0 or (pred[0] == 1 and tiene_palabra):
-                    st.error("¡ALERTA! Posible Phishing detectado por IA")
-                else:
-                    st.success("La URL es Segura")
+    url = entrada_url.get().strip()
+    if not url:
+        messagebox.showwarning("Advertencia", "Por favor ingresa una URL.")
+        return
+    
+    url_limpia = url.lower()
+    url_completa = url_limpia if "://" in url_limpia else "http://" + url_limpia
+    parsed_url = urlparse(url_completa)
+    netloc = parsed_url.netloc
+    
+    # CAPA 1: Verificar contra la base de datos global en vivo de URLhaus
+    if url_limpia in urlhaus_malicious_urls or any(netloc in item for item in urlhaus_malicious_urls):
+        resultado_label.config(text="¡ALERTA ROJA! Reportado en URLhaus (Malware/Phishing)", fg="red")
+        return
+
+    # CAPA 2: Lista Negra local
+    if netloc in DOMINIOS_MALICIOSOS:
+        resultado_label.config(text="¡ALERTA ROJA! Dominio en Lista Negra Local", fg="red")
+        return
+
+    # CAPA 3: Detección de Hosting Gratuito / Cloud con trampa
+    es_hosting_gratis = any(hosting in netloc for hosting in HOSTINGS_GRATUITOS)
+    tiene_palabra_clave = any(palabra in url_limpia for palabra in palabras_suspiciosas)
+
+    if es_hosting_gratis and tiene_palabra_clave:
+        resultado_label.config(text="¡ALERTA ROJA! Hosting gratuito con trampa detectado", fg="red")
+        return
+
+    # CAPA 4: Inteligencia Artificial (Random Forest)
+    url_length = len(url)
+    n_dots = url.count('.')
+    n_hypens = url.count('-')
+    n_at = url.count('@')
+    
+    entrada_df = pd.DataFrame([[url_length, n_dots, n_hypens, n_at]], 
+                              columns=['url_length', 'n_dots', 'n_hypens', 'n_at'])
+    
+    prediccion = modelo.predict(entrada_df)
+    
+    if n_at > 0 or (prediccion[0] == 1 and tiene_palabra_clave):
+        resultado_label.config(text="¡ALERTA! Posible Phishing detectado por IA", fg="red")
+    else:
+        resultado_label.config(text="La URL es Segura", fg="green")
+
+# 4. INTERFAZ GRÁFICA (Tkinter)
+root = tk.Tk()
+root.title("CISO App - Detector de Phishing Multi-Capa")
+root.geometry("500x320")
+
+titulo = tk.Label(root, text="Detector de Phishing Definitivo", font=("Arial", 14, "bold"))
+titulo.pack(pady=10)
+
+label_inst = tk.Label(root, text="Ingresa la URL a analizar:")
+label_inst.pack()
+
+entrada_url = tk.Entry(root, width=58)
+entrada_url.pack(pady=5)
+
+boton_analizar = tk.Button(root, text="Analizar URL", command=analizar_url, bg="#cc0000", fg="white", font=("Arial", 10, "bold"))
+boton_analizar.pack(pady=10)
+
+resultado_label = tk.Label(root, text="", font=("Arial", 11, "bold"))
+resultado_label.pack(pady=10)
+
+root.mainloop()
